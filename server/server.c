@@ -1,50 +1,55 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <unistd.h>
 
 #define PORT 8889
 
-int main() {
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
+void error(const char *msg) {
+    perror(msg);
+    exit(1);
+}
 
-    // Crear socket del servidor
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("Socket failed");
-        exit(EXIT_FAILURE);
-    }
+void startServer() {
+    int sockfd, newsockfd;
+    socklen_t clilen;
+    char buffer[256];
+    struct sockaddr_in serv_addr, cli_addr;
+    int n;
 
-    // Configurar dirección del servidor
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) 
+       error("ERROR opening socket");
 
-    // Asignar el socket a una dirección y puerto
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
-        exit(EXIT_FAILURE);
-    }
+    bzero((char *) &serv_addr, sizeof(serv_addr));
 
-    // Escuchar conexiones entrantes
-    if (listen(server_fd, 3) < 0) {
-        perror("Listen");
-        exit(EXIT_FAILURE);
-    }
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(PORT);
 
-    // Aceptar una conexión entrante
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-        perror("Accept");
-        exit(EXIT_FAILURE);
-    }
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
+            error("ERROR on binding");
 
-    printf("Conexión exitosa\n");
+    listen(sockfd, 5);
+    clilen = sizeof(cli_addr);
 
-    close(new_socket);
-    close(server_fd);
+    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+    if (newsockfd < 0) 
+          error("ERROR on accept");
 
+    bzero(buffer,256);
+    n = read(newsockfd, buffer, 255);
+    if (n < 0) error("ERROR reading from socket");
+
+    printf("Here is the message: %s\n", buffer);
+    close(newsockfd);
+    close(sockfd);
+}
+
+int main(int argc, char *argv[]) {
+    startServer();
     return 0;
 }
