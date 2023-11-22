@@ -22,7 +22,7 @@ void listFiles(int socket, const char *directoryPath) {
 
     if (d) {
         while ((dir = readdir(d)) != NULL) {
-            if (dir->d_type == DT_REG) { // Si es un archivo regular
+            if (dir->d_type == DT_REG) { // Asegurar que es un archivo regular
                 snprintf(buffer, sizeof(buffer), "%s\n", dir->d_name);
                 write(socket, buffer, strlen(buffer));
             }
@@ -31,6 +31,7 @@ void listFiles(int socket, const char *directoryPath) {
     }
     write(socket, "end", strlen("end")); // Marca el fin de la lista de archivos
 }
+
 
 void startServer(const char *directoryPath) {
     int sockfd, newsockfd;

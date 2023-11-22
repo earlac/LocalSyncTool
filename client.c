@@ -77,7 +77,7 @@ void startClient(const char *directoryPath) {
 
     write(sockfd, directoryPath, strlen(directoryPath)); // Enviar el nombre del directorio al servidor
 
-    while (1) {
+        while (1) {
         bzero(buffer, 256);
         n = read(sockfd, buffer, 255);
         if (n < 0) 
@@ -85,7 +85,10 @@ void startClient(const char *directoryPath) {
         if (strcmp(buffer, "end") == 0) {
             break;
         }
-        printFileMetadata(directoryPath, buffer); // Imprimir metadatos del archivo
+        if (strlen(buffer) > 1) {  // Asegurar que el buffer no esté vacío o no sea solo un salto de línea
+            buffer[strcspn(buffer, "\n")] = 0; // Eliminar el salto de línea al final
+            printFileMetadata(directoryPath, buffer); // Imprimir metadatos del archivo
+        }
     }
     close(sockfd);
 }
