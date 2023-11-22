@@ -5,6 +5,7 @@
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <dirent.h>
 
 #define PORT 8889
 
@@ -13,12 +14,28 @@ void error(const char *msg) {
     exit(1);
 }
 
-void startServer() {
+void listFiles(int socket, const char *directoryPath) {
+    DIR *d;
+    struct dirent *dir;
+    d = opendir(directoryPath);
+    char buffer[256];
+
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            if (dir->d_type == DT_REG) { // Si es un archivo regular
+                snprintf(buffer, sizeof(buffer), "%s\n", dir->d_name);
+                write(socket, buffer, strlen(buffer));
+            }
+        }
+        closedir(d);
+    }
+    write(socket, "end", strlen("end")); // Marca el fin de la lista de archivos
+}
+
+void startServer(const char *directoryPath) {
     int sockfd, newsockfd;
     socklen_t clilen;
-    char buffer[256];
     struct sockaddr_in serv_addr, cli_addr;
-    int n;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) 
@@ -40,16 +57,17 @@ void startServer() {
     if (newsockfd < 0) 
           error("ERROR on accept");
 
-    bzero(buffer,256);
-    n = read(newsockfd, buffer, 255);
-    if (n < 0) error("ERROR reading from socket");
-
-    printf("Here is the message: %s\n", buffer);
+    listFiles(newsockfd, directoryPath);
     close(newsockfd);
     close(sockfd);
 }
 
 int main(int argc, char *argv[]) {
-    startServer();
+    if (argc < 2) {
+        fprintf(stderr,"Uso: %s <directorio>\n", argv[0]);
+        exit(1);
+    }
+
+    startServer(argv[1]);
     return 0;
 }
