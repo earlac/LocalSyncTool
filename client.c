@@ -10,6 +10,7 @@
 #include <time.h>
 
 #define PORT 8889
+#define HOST "172.19.12.86"
 
 void error(const char *msg) {
     perror(msg);
@@ -59,7 +60,7 @@ void startClient(const char *directoryPath) {
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) 
         error("ERROR opening socket");
-    server = gethostbyname("172.19.12.86"); // Asegúrate de que esta sea la dirección IP correcta
+    server = gethostbyname(HOST); // Asegúrate de que esta sea la dirección IP correcta
     if (server == NULL) {
         fprintf(stderr,"ERROR, no such host\n");
         exit(0);
