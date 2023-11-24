@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
-#include <libgen.h>  // Para basename
+#include <libgen.h>
 
 #define PORT 8889
 #define HOST "localhost"
@@ -18,308 +18,192 @@ typedef struct {
     char filename[256];
     off_t size;
     time_t mod_time;
+    char status[32];
 } FileInfo;
 
 void error(const char *msg) {
     perror(msg);
     exit(0);
 }
-typedef enum {
-    NEW,
-    MODIFIED,
-    DELETED
-} FileChangeType;
 
-typedef struct {
-    char filename[256];
-    FileChangeType changeType;
-} FileChange;
-
-typedef struct {
-    FileChange *changes;
-    int count;
-} FileChangeList;
-
-
-// prototype
-
-void readDirectory(const char *directoryPath, FileInfo **files, int *fileCount);
-void loadPreviousState(const char *stateFilePath, FileInfo **previousFiles, int *previousFileCount);
-char *generateStateFileName(const char *directoryPath);
-void compareFileLists(const FileInfo *currentFiles, int currentFileCount, const FileInfo *previousFiles, int previousFileCount, FileChangeList *fileChangeList);
-
-void printFileMetadata(const char *directoryPath, const char *filename) {
-    char filePath[1024];
-    struct stat fileInfo;
-    struct tm *tm;
-
-    // Construir la ruta completa del archivo
-    snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, filename);
-    printf("Intentando acceder a: %s\n", filePath); // Mostrar la ruta del archivo
-
-    // Obtener información del archivo
-    if (stat(filePath, &fileInfo) < 0) {
-        perror("Error al obtener información del archivo");
-        printf("No se pudo acceder a: %s\n", filePath); // Mostrar el error con la ruta del archivo
-        return;
+char *generateStateFileName(const char *directoryPath) {
+    char *dirName = strdup(directoryPath);
+    char *baseName = basename(dirName);
+    char *stateFileName = malloc(strlen(baseName) + strlen("_state.txt") + 1);
+    if (stateFileName == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
-
-    // Convertir la fecha y hora de la última modificación a formato legible
-    tm = localtime(&fileInfo.st_mtime);
-
-    // Imprimir detalles
-    printf("Archivo: %s\n", filename);
-
-    // Usar printf con formato adecuado para off_t
-    #ifdef __APPLE__
-    printf("Tamaño: %lld bytes\n", fileInfo.st_size); // macOS usa %lld para off_t
-    #else
-    printf("Tamaño: %ld bytes\n", fileInfo.st_size);  // Otros sistemas suelen usar %ld
-    #endif
-
-    printf("Última modificación: %d-%02d-%02d %02d:%02d:%02d\n",
-           tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-           tm->tm_hour, tm->tm_min, tm->tm_sec);
-}
-
-void startClient(const char *directoryPath, FileChangeList *fileChangeList) {
-    int sockfd, n;
-    struct sockaddr_in serv_addr;
-    struct hostent *server;
-    char buffer[1024]; // Aumentar el tamaño del buffer si es necesario
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) 
-        error("ERROR opening socket");
-
-    server = gethostbyname(HOST); // Asegúrate de que esta sea la dirección IP correcta
-    if (server == NULL) {
-        fprintf(stderr,"ERROR, no such host\n");
-        exit(0);
-    }
-
-    bzero((char *) &serv_addr, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, 
-         (char *)&serv_addr.sin_addr.s_addr,
-         server->h_length);
-    serv_addr.sin_port = htons(PORT);
-
-    if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) 
-        error("ERROR connecting");
-
-        // Enviar los cambios de archivos al servidor
-        for (int i = 0; i < fileChangeList->count; i++) {
-            snprintf(buffer, sizeof(buffer), "File: %s, ChangeType: %d\n", fileChangeList->changes[i].filename, fileChangeList->changes[i].changeType);
-            write(sockfd, buffer, strlen(buffer));
-        }
-
-                // Enviar una señal de finalización o similar si es necesario
-        char endSignal[] = "END_OF_CHANGES\n";
-        write(sockfd, endSignal, strlen(endSignal));
-
-        
-    close(sockfd);
+    sprintf(stateFileName, "%s_state.txt", baseName);
+    free(dirName);
+    return stateFileName;
 }
 
 void readDirectory(const char *directoryPath, FileInfo **files, int *fileCount) {
-    DIR *d;
-    struct dirent *dir;
-    d = opendir(directoryPath);
-    if(!d) {
+    DIR *d = opendir(directoryPath);
+    if (!d) {
         perror("Error al abrir el directorio");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
+    struct dirent *dir;
+    struct stat fileInfo;
+    char filePath[1024];
     *fileCount = 0;
     while ((dir = readdir(d)) != NULL) {
-        if (dir->d_type == DT_REG) { // Asegurar que es un archivo regular
-            *fileCount += 1;
+        if (dir->d_type == DT_REG) {
+            snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, dir->d_name);
+            if (stat(filePath, &fileInfo) == -1) {
+                continue;
+            }
+            (*fileCount)++;
         }
     }
 
-    *files = malloc(sizeof(FileInfo) * (*fileCount));
-    if(!*files) {
-        perror("Error al asignar memoria");
-        exit(1);
+    *files = (FileInfo *)malloc(sizeof(FileInfo) * (*fileCount));
+    if (!*files) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
 
     rewinddir(d);
     int i = 0;
-    struct stat fileInfo;
-
     while ((dir = readdir(d)) != NULL) {
-        if (dir->d_type == DT_REG) { // Asegurar que es un archivo regular
-            snprintf((*files)[i].filename, sizeof((*files)[i].filename), "%s", dir->d_name);
-
-            char filePath[1024];
+        if (dir->d_type == DT_REG) {
             snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, dir->d_name);
-
-            if (stat(filePath, &fileInfo) < 0) {
-                perror("Error al obtener información del archivo");
-                printf("No se pudo acceder a: %s\n", filePath); // Mostrar el error con la ruta del archivo
+            if (stat(filePath, &fileInfo) == -1) {
                 continue;
             }
-
+            strncpy((*files)[i].filename, dir->d_name, sizeof((*files)[i].filename));
             (*files)[i].size = fileInfo.st_size;
             (*files)[i].mod_time = fileInfo.st_mtime;
-            printf("Archivo: %s\n", (*files)[i].filename);
+            strcpy((*files)[i].status, "intacto");
             i++;
         }
     }
     closedir(d);
 }
 
-void loadPreviousState(const char *stateFilePath, FileInfo **previousFiles, int *previousFileCount) {
-    FILE *file = fopen(stateFilePath, "r");
-    if (file == NULL) {
-        printf("No se encontró el archivo de estado: %s\n", stateFilePath);
+void readStateFile(const char *stateFileName, FileInfo **previousFiles, int *previousFileCount) {
+    FILE *file = fopen(stateFileName, "r");
+    if (!file) {
         *previousFiles = NULL;
         *previousFileCount = 0;
         return;
     }
+
     char line[1024];
     *previousFileCount = 0;
     while (fgets(line, sizeof(line), file)) {
         (*previousFileCount)++;
     }
 
-    // Asignar memoria para los archivos previos
-    *previousFiles = malloc(sizeof(FileInfo) * (*previousFileCount));
+    *previousFiles = (FileInfo *)malloc(sizeof(FileInfo) * (*previousFileCount));
     if (!*previousFiles) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
- // Volver al inicio del archivo para leer los datos
-    rewind(file);
-    int idx = 0;
-    while (fgets(line, sizeof(line), file)) {
-        sscanf(line, "%s %ld %ld", 
-               (*previousFiles)[idx].filename, 
-               &(*previousFiles)[idx].size, 
-               &(*previousFiles)[idx].mod_time);
-        idx++;
-    }
 
+    rewind(file);
+    int i = 0;
+    while (fgets(line, sizeof(line), file)) {
+        sscanf(line, "%s %ld %ld %s", 
+               (*previousFiles)[i].filename, 
+               &(*previousFiles)[i].size, 
+               &(*previousFiles)[i].mod_time, 
+               (*previousFiles)[i].status);
+        i++;
+    }
     fclose(file);
 }
-char *generateStateFileName(const char *directoryPath) {
-    char *dirName = strdup(directoryPath);  // Duplicar la ruta del directorio para no modificar el original
-    char *baseName = basename(dirName);     // Obtener el nombre base del directorio
 
-    char *stateFileName = malloc(strlen(baseName) + strlen("_state.txt") + 1);
-    if (stateFileName == NULL) {
-        perror("malloc");
+void writeStateFile(const char *stateFileName, const FileInfo *files, int fileCount) {
+    FILE *file = fopen(stateFileName, "w");
+    if (!file) {
+        perror("fopen");
         exit(EXIT_FAILURE);
     }
 
-    sprintf(stateFileName, "%s_state.txt", baseName); // Crear el nombre del archivo de estado
-    free(dirName);  // Liberar la memoria duplicada
-
-    return stateFileName;  // Retornar el nombre del archivo de estado
+    for (int i = 0; i < fileCount; i++) {
+        fprintf(file, "%s %lld %ld %s\n", 
+                files[i].filename, 
+                (long long)files[i].size, 
+                (long)files[i].mod_time,
+                files[i].status);
+    }
+    fclose(file);
 }
 
-void compareFileLists(const FileInfo *currentFiles, int currentFileCount, const FileInfo *previousFiles, int previousFileCount, FileChangeList *fileChangeList) {
-    int maxChanges = currentFileCount + previousFileCount;
-    fileChangeList->changes = malloc(sizeof(FileChange) * maxChanges);
-    fileChangeList->count = 0;
+void compareAndUpdateFileStates(FileInfo **currentFiles, int *currentFileCount, FileInfo *previousFiles, int previousFileCount) {
+    int newCurrentFileCount = *currentFileCount + previousFileCount; // Máximo posible si todos los archivos anteriores fueron eliminados
+    FileInfo *newCurrentFiles = (FileInfo *)realloc(*currentFiles, sizeof(FileInfo) * newCurrentFileCount);
+    if (!newCurrentFiles) {
+        perror("realloc");
+        exit(EXIT_FAILURE);
+    }
+    *currentFiles = newCurrentFiles;
 
-    // Identificar archivos nuevos o modificados
-    for (int i = 0; i < currentFileCount; i++) {
+    for (int i = 0; i < *currentFileCount; i++) {
         int found = 0;
         for (int j = 0; j < previousFileCount; j++) {
-            if (strcmp(currentFiles[i].filename, previousFiles[j].filename) == 0) {
+            if (strcmp((*currentFiles)[i].filename, previousFiles[j].filename) == 0) {
                 found = 1;
-                if (currentFiles[i].size != previousFiles[j].size || currentFiles[i].mod_time != previousFiles[j].mod_time) {
-                    strcpy(fileChangeList->changes[fileChangeList->count].filename, currentFiles[i].filename);
-                    fileChangeList->changes[fileChangeList->count++].changeType = MODIFIED;
+                if ((*currentFiles)[i].mod_time != previousFiles[j].mod_time) {
+                    strcpy((*currentFiles)[i].status, "modificado");
+                } else {
+                    strcpy((*currentFiles)[i].status, "intacto");
                 }
                 break;
             }
         }
         if (!found) {
-            strcpy(fileChangeList->changes[fileChangeList->count].filename, currentFiles[i].filename);
-            fileChangeList->changes[fileChangeList->count++].changeType = NEW;
+            strcpy((*currentFiles)[i].status, "nuevo");
         }
     }
 
-    // Identificar archivos eliminados
-    for (int i = 0; i < previousFileCount; i++) {
+    int currentIndex = *currentFileCount;
+    for (int j = 0; j < previousFileCount; j++) {
         int found = 0;
-        for (int j = 0; j < currentFileCount; j++) {
-            if (strcmp(previousFiles[i].filename, currentFiles[j].filename) == 0) {
+        for (int i = 0; i < *currentFileCount; i++) {
+            if (strcmp(previousFiles[j].filename, (*currentFiles)[i].filename) == 0) {
                 found = 1;
                 break;
             }
         }
         if (!found) {
-            strcpy(fileChangeList->changes[fileChangeList->count].filename, previousFiles[i].filename);
-            fileChangeList->changes[fileChangeList->count++].changeType = DELETED;
-            }
+            // Agrega el archivo eliminado a la lista actual con estado "eliminado"
+            strcpy((*currentFiles)[currentIndex].filename, previousFiles[j].filename);
+            (*currentFiles)[currentIndex].size = previousFiles[j].size;
+            (*currentFiles)[currentIndex].mod_time = previousFiles[j].mod_time;
+            strcpy((*currentFiles)[currentIndex].status, "eliminado");
+            currentIndex++;
         }
-    
+    }
+    *currentFileCount = currentIndex; // Actualizar el contador de archivos actuales
 }
-
 
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr,"Uso: %s <directorio>\n", argv[0]);
-        exit(0);
+        fprintf(stderr, "Uso: %s <directorio>\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
 
     char *stateFileName = generateStateFileName(argv[1]);
     
-    printf("Nombre del archivo de estado: %s\n", stateFileName);
-
-    //print argv[1] files name and mod time
-    printf("Directorio: %s\n", argv[1]);
-
     FileInfo *currentFiles, *previousFiles;
-    FileChangeList fileChangeList;
-
     int currentFileCount, previousFileCount;
 
     readDirectory(argv[1], &currentFiles, &currentFileCount);
+    readStateFile(stateFileName, &previousFiles, &previousFileCount);
 
-    loadPreviousState(stateFileName, &previousFiles, &previousFileCount);
+    compareAndUpdateFileStates(&currentFiles, &currentFileCount, previousFiles, previousFileCount);
+    writeStateFile(stateFileName, currentFiles, currentFileCount);
 
-    compareFileLists(currentFiles, currentFileCount, previousFiles, previousFileCount, &fileChangeList);
-
-    startClient(argv[1], &fileChangeList);
+    free(currentFiles);
+    if (previousFiles != NULL) {
+        free(previousFiles);
+    }
+    free(stateFileName);
     return 0;
 }
-
-
-/*
-    //print fileChangeList changes
-    for (int i = 0; i < fileChangeList.count; i++) {
-        printf("Archivo: %s\n", fileChangeList.changes[i].filename);
-        switch (fileChangeList.changes[i].changeType) {
-            case NEW:
-                printf("Tipo de cambio: Nuevo\n");
-                break;
-            case MODIFIED:
-                printf("Tipo de cambio: Modificado\n");
-                break;
-            case DELETED:
-                printf("Tipo de cambio: Eliminado\n");
-                break;
-        }
-    }
-
-    //print current files name and mod time
-    for (int i = 0; i < currentFileCount; i++) {
-        printf("Archivo: %s\n", currentFiles[i].filename);
-        printf("Tamaño: %ld bytes\n", currentFiles[i].size);
-        printf("Última modificación: %s\n", ctime(&currentFiles[i].mod_time));
-    }
-
-    //print previous files name and mod time
-    for (int i = 0; i < previousFileCount; i++) {
-        printf("Archivo: %s\n", previousFiles[i].filename);
-        printf("Tamaño: %ld bytes\n", previousFiles[i].size);
-        printf("Última modificación: %s\n", ctime(&previousFiles[i].mod_time));
-    }
-    free(fileChangeList.changes);
-*/
