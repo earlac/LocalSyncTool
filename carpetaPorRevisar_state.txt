@@ -1,0 +1,3 @@
+archivo1.txt 1024 1616145400
+imagen.png 2048 1616145500
+documento.pdf 3072 1616145600
