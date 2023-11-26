@@ -1,0 +1,4 @@
+brrcopy.txt 10 1701014374 intacto
+brrw.txt 14 1701014374 intacto
+fhola.txt 22 1701014374 intacto
+brr.txt 11 1701021607 intacto

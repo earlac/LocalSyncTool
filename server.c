@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <libgen.h>  // Para basename
 #include <time.h>
+#include <netdb.h>
 
 #define PORT 8889
 
@@ -18,7 +19,9 @@ typedef struct {
     char filename[256];
     off_t size;
     time_t mod_time;
+    char status[32];
 } FileInfo;
+
 typedef enum {
     NEW,
     MODIFIED,
@@ -58,45 +61,65 @@ void listFiles(int socket, const char *directoryPath) {
     write(socket, "end", strlen("end")); // Marca el fin de la lista de archivos
 }
 
-void processClientChanges(int socket) {
-    char buffer[1024];
+void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount) {
+    char buffer[4096];
     int n;
+    FileInfo clientFile;
 
     while (1) {
-        bzero(buffer, 1024);
-        n = read(socket, buffer, 1023);
+        bzero(buffer, sizeof(buffer));
+        n = read(socket, buffer, sizeof(buffer) - 1);
         if (n < 0) error("ERROR reading from socket");
         if (n == 0) break; // Fin de la transmisión
 
-        buffer[n] = '\0'; // Asegurar que el buffer es una cadena válida
-
-        // Procesar el mensaje recibido
         if (strncmp(buffer, "END_OF_CHANGES", 14) == 0) {
             break; // Fin de la recepción de cambios
         }
 
-        // Aquí, analizar el buffer para extraer el nombre del archivo y su tipo de cambio
-        printf("%s", buffer); // Ejemplo de procesamiento simple
+        sscanf(buffer, "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\n", 
+               clientFile.filename, 
+               &clientFile.size, 
+               &clientFile.mod_time, 
+               clientFile.status);
 
-        // Aquí, puedes agregar lógica para manejar los cambios recibidos
-        // Por ejemplo, actualizar archivos, descargarlos, etc.
+        int found = 0;
+        for (int i = 0; i < serverFileCount; i++) {
+            // printf("\n");
+            // printf("\n");
+            // printf(clientFile.filename); 
+            // printf("\n");
+            // printf(serverFiles[i].filename);
+            // printf("\n");
+            if (strcmp(clientFile.filename, serverFiles[i].filename) == 0) {
+                found = 1;
+                // Comparar el estado del archivo
+                if (strcmp(clientFile.status, "eliminado") == 0 || strcmp(serverFiles[i].status, "eliminado") == 0) {
+                    printf("Archivo %s eliminado\n", clientFile.filename);
+                } else if (strcmp(clientFile.status, "modificado") == 0 || strcmp(serverFiles[i].status, "modificado") == 0) {
+                    printf("Archivo %s modificado\n", clientFile.filename);
+                } else {
+                    printf("Archivo %s intacto\n", clientFile.filename);
+                }
+                break;
+            }
+        }
+        if (!found) {
+            printf("Archivo %s nuevo\n", clientFile.filename);
+        }
     }
 }
 
 char *generateStateFileName(const char *directoryPath) {
-    char *dirName = strdup(directoryPath);  // Duplicar la ruta del directorio para no modificar el original
-    char *baseName = basename(dirName);     // Obtener el nombre base del directorio
-
-    char *stateFileName = malloc(strlen(baseName) + strlen("_state-server.txt") + 1);
+    char *dirName = strdup(directoryPath);
+    char *baseName = basename(dirName);
+    char *stateFileName = malloc(strlen(baseName) + strlen("_server-state.txt") + 1);
     if (stateFileName == NULL) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
-
-    sprintf(stateFileName, "%s_state.txt", baseName); // Crear el nombre del archivo de estado
-    free(dirName);  // Liberar la memoria duplicada
-
-    return stateFileName;  // Retornar el nombre del archivo de estado
+    sprintf(stateFileName, "%s_server-state.txt", baseName);
+    free(dirName);
+    return stateFileName;
 }
 
 void readDirectory(const char *directoryPath, FileInfo **files, int *fileCount) {
@@ -180,7 +203,8 @@ void loadPreviousState(const char *stateFilePath, FileInfo **previousFiles, int 
 
     fclose(file);
 }
-void startServer(const char *directoryPath) {
+
+void startServer(const char *directoryPath, FileInfo *serverFiles, int serverFileCount) {
     int sockfd, newsockfd;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
@@ -194,7 +218,6 @@ void startServer(const char *directoryPath) {
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(PORT);
-    
 
     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
             error("ERROR on binding");
@@ -206,11 +229,76 @@ void startServer(const char *directoryPath) {
     if (newsockfd < 0) 
           error("ERROR on accept");
 
-    processClientChanges(newsockfd); // Procesar los cambios enviados por el cliente
+    processClientChanges(newsockfd, serverFiles, serverFileCount); // Procesar los cambios enviados por el cliente
+
     close(newsockfd);
     close(sockfd);
 }
 
+
+void writeStateFile(const char *stateFileName, const FileInfo *files, int fileCount) {
+    FILE *file = fopen(stateFileName, "w");
+    if (!file) {
+        perror("fopen");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < fileCount; i++) {
+        fprintf(file, "%s %lld %ld %s\n", 
+                files[i].filename, 
+                (long long)files[i].size, 
+                (long)files[i].mod_time,
+                files[i].status);
+    }
+    fclose(file);
+}
+void compareAndUpdateFileStates(FileInfo **currentFiles, int *currentFileCount, FileInfo *previousFiles, int previousFileCount) {
+    int newCurrentFileCount = *currentFileCount + previousFileCount; // Máximo posible si todos los archivos anteriores fueron eliminados
+    FileInfo *newCurrentFiles = (FileInfo *)realloc(*currentFiles, sizeof(FileInfo) * newCurrentFileCount);
+    if (!newCurrentFiles) {
+        perror("realloc");
+        exit(EXIT_FAILURE);
+    }
+    *currentFiles = newCurrentFiles;
+
+    for (int i = 0; i < *currentFileCount; i++) {
+        int found = 0;
+        for (int j = 0; j < previousFileCount; j++) {
+            if (strcmp((*currentFiles)[i].filename, previousFiles[j].filename) == 0) {
+                found = 1;
+                if ((*currentFiles)[i].mod_time != previousFiles[j].mod_time) {
+                    strcpy((*currentFiles)[i].status, "modificado");
+                } else {
+                    strcpy((*currentFiles)[i].status, "intacto");
+                }
+                break;
+            }
+        }
+        if (!found) {
+            strcpy((*currentFiles)[i].status, "nuevo");
+        }
+    }
+
+    int currentIndex = *currentFileCount;
+    for (int j = 0; j < previousFileCount; j++) {
+        int found = 0;
+        for (int i = 0; i < *currentFileCount; i++) {
+            if (strcmp(previousFiles[j].filename, (*currentFiles)[i].filename) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            // Agrega el archivo eliminado a la lista actual con estado "eliminado"
+            strcpy((*currentFiles)[currentIndex].filename, previousFiles[j].filename);
+            (*currentFiles)[currentIndex].size = previousFiles[j].size;
+            (*currentFiles)[currentIndex].mod_time = previousFiles[j].mod_time;
+            strcpy((*currentFiles)[currentIndex].status, "eliminado");
+            currentIndex++;
+        }
+    }
+    *currentFileCount = currentIndex; // Actualizar el contador de archivos actuales
+}
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr,"Uso: %s <directorio>\n", argv[0]);
@@ -218,25 +306,39 @@ int main(int argc, char *argv[]) {
     }
 
     char *stateFileName = generateStateFileName(argv[1]);
-
     printf("Nombre del archivo de estado: %s\n", stateFileName);
-
     printf("Directorio a monitorear: %s\n", argv[1]);
 
     FileInfo *currentFiles, *previousFiles;
-    FileChangeList fileChangeList;
-
     int currentFileCount, previousFileCount;
+    
     readDirectory(argv[1], &currentFiles, &currentFileCount);
     loadPreviousState(stateFileName, &previousFiles, &previousFileCount);
+    compareAndUpdateFileStates(&currentFiles, &currentFileCount, previousFiles, previousFileCount);
+    writeStateFile(stateFileName, currentFiles, currentFileCount);
 
-    //print current files name and mod time
     for (int i = 0; i < currentFileCount; i++) {
         printf("Archivo: %s\n", currentFiles[i].filename);
         printf("Tamaño: %ld bytes\n", currentFiles[i].size);
         printf("Última modificación: %s\n", ctime(&currentFiles[i].mod_time));
     }
 
-    startServer(argv[1]);
+    free(currentFiles);
+    if (previousFiles != NULL) {
+        free(previousFiles);
+    }
+    free(stateFileName);
+
+    // Nueva parte: leer el directorio actual del servidor
+    FileInfo *serverFiles;
+    int serverFileCount;
+    readDirectory(argv[1], &serverFiles, &serverFileCount);
+
+    // Iniciar servidor
+    startServer(argv[1], serverFiles, serverFileCount);
+
+    // Liberar memoria de serverFiles
+    free(serverFiles);
+
     return 0;
 }

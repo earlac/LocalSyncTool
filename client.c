@@ -25,6 +25,58 @@ void error(const char *msg) {
     perror(msg);
     exit(0);
 }
+char *readFileContents(const char *filePath);
+
+void startClient(const char *directoryPath, FileInfo *files, int fileCount) {
+    int sockfd, n;
+    struct sockaddr_in serv_addr;
+    struct hostent *server;
+    char buffer[1024];
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) 
+        error("ERROR opening socket");
+
+    server = gethostbyname(HOST);
+    if (server == NULL) {
+        fprintf(stderr,"ERROR, no such host\n");
+        exit(0);
+    }
+
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr, 
+         (char *)&serv_addr.sin_addr.s_addr,
+         server->h_length);
+    serv_addr.sin_port = htons(PORT);
+
+    if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) 
+        error("ERROR connecting");
+
+    // Enviar información de los archivos y sus estados
+    for (int i = 0; i < fileCount; i++) {
+        char filePath[1024];
+        snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
+        
+        char *fileContent = readFileContents(filePath);
+        if (!fileContent) {
+            continue;
+        }
+
+        char buffer[4096];  // Aumenta el tamaño si es necesario
+        snprintf(buffer, sizeof(buffer), "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n%s\n\n",
+                 files[i].filename, files[i].size, files[i].mod_time, files[i].status, fileContent);
+        write(sockfd, buffer, strlen(buffer));
+
+        free(fileContent);
+    }
+
+    // Enviar señal de fin
+    n = write(sockfd, "END_OF_CHANGES\n", strlen("END_OF_CHANGES\n"));
+    if (n < 0) error("ERROR writing to socket");
+
+    close(sockfd);
+}
 
 char *generateStateFileName(const char *directoryPath) {
     char *dirName = strdup(directoryPath);
@@ -182,6 +234,31 @@ void compareAndUpdateFileStates(FileInfo **currentFiles, int *currentFileCount, 
     *currentFileCount = currentIndex; // Actualizar el contador de archivos actuales
 }
 
+char *readFileContents(const char *filePath) {
+    FILE *file = fopen(filePath, "rb");
+    if (!file) {
+        perror("fopen");
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *content = malloc(fileSize + 1);
+    if (!content) {
+        perror("malloc");
+        fclose(file);
+        return NULL;
+    }
+
+    fread(content, 1, fileSize, file);
+    content[fileSize] = '\0';
+    fclose(file);
+
+    return content;
+}
+
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -192,6 +269,7 @@ int main(int argc, char *argv[]) {
     char *stateFileName = generateStateFileName(argv[1]);
     
     FileInfo *currentFiles, *previousFiles;
+    
     int currentFileCount, previousFileCount;
 
     readDirectory(argv[1], &currentFiles, &currentFileCount);
@@ -200,6 +278,9 @@ int main(int argc, char *argv[]) {
     compareAndUpdateFileStates(&currentFiles, &currentFileCount, previousFiles, previousFileCount);
     writeStateFile(stateFileName, currentFiles, currentFileCount);
 
+    startClient(argv[1], currentFiles, currentFileCount);
+    
+    
     free(currentFiles);
     if (previousFiles != NULL) {
         free(previousFiles);
