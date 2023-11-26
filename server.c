@@ -180,8 +180,6 @@ void loadPreviousState(const char *stateFilePath, FileInfo **previousFiles, int 
 
     fclose(file);
 }
-
-
 void startServer(const char *directoryPath) {
     int sockfd, newsockfd;
     socklen_t clilen;
