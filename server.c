@@ -61,6 +61,25 @@ void listFiles(int socket, const char *directoryPath) {
     write(socket, "end", strlen("end")); // Marca el fin de la lista de archivos
 }
 
+void receiveFileContent(int socket, const char *filename) {
+    char filePath[1024];
+    snprintf(filePath, sizeof(filePath), "%s/%s", "/path/to/server/directory", filename);
+
+    FILE *file = fopen(filePath, "wb");
+    if (!file) {
+        perror("Error al abrir archivo para escritura");
+        return;
+    }
+
+    char buffer[1024];
+    ssize_t bytesReceived;
+    while ((bytesReceived = read(socket, buffer, sizeof(buffer))) > 0) {
+        fwrite(buffer, sizeof(char), bytesReceived, file);
+    }
+
+    fclose(file);
+}
+
 void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount) {
     char buffer[4096];
     int n;
@@ -96,7 +115,8 @@ void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount
                 if (strcmp(clientFile.status, "eliminado") == 0 || strcmp(serverFiles[i].status, "eliminado") == 0) {
                     printf("Archivo %s eliminado\n", clientFile.filename);
                 } else if (strcmp(clientFile.status, "modificado") == 0 || strcmp(serverFiles[i].status, "modificado") == 0) {
-                    printf("Archivo %s modificado\n", clientFile.filename);
+                    printf("Recibiendo contenido actualizado para %s\n", clientFile.filename);
+                    receiveFileContent(socket, clientFile.filename);
                 } else {
                     printf("Archivo %s intacto\n", clientFile.filename);
                 }

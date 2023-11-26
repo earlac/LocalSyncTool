@@ -21,6 +21,9 @@ typedef struct {
     char status[32];
 } FileInfo;
 
+// Prototipo de la función sendFileContent
+void sendFileContent(int socket, const char *filePath);
+
 void error(const char *msg) {
     perror(msg);
     exit(0);
@@ -61,8 +64,26 @@ void startClient(const char *directoryPath, FileInfo *files, int fileCount) {
         char *fileContent = readFileContents(filePath);
         if (!fileContent) {
             continue;
+
+        if (strcmp(files[i].status, "modificado") == 0) {
+            char filePath[1024];
+            snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
+            printf("Enviando contenido actualizado de %s\n", files[i].filename);
+            sendFileContent(sockfd, filePath);
+        }
         }
 
+        for (int i = 0; i < fileCount; i++) {
+        // ... [enviar información del archivo]
+
+        if (strcmp(files[i].status, "modificado") == 0) {
+            // Si el archivo ha sido modificado, enviar el contenido actualizado
+            char filePath[1024];
+            snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
+            printf("Enviando contenido actualizado de %s\n", files[i].filename);
+            sendFileContent(sockfd, filePath);
+        }
+    }
         char buffer[4096];  // Aumenta el tamaño si es necesario
         snprintf(buffer, sizeof(buffer), "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n%s\n\n",
                  files[i].filename, files[i].size, files[i].mod_time, files[i].status, fileContent);
@@ -183,6 +204,23 @@ void writeStateFile(const char *stateFileName, const FileInfo *files, int fileCo
                 (long)files[i].mod_time,
                 files[i].status);
     }
+    fclose(file);
+}
+
+
+void sendFileContent(int socket, const char *filePath) {
+    FILE *file = fopen(filePath, "rb");
+    if (!file) {
+        perror("Error al abrir archivo para lectura");
+        return;
+    }
+
+    char buffer[1024];
+    ssize_t bytesRead;
+    while ((bytesRead = fread(buffer, sizeof(char), sizeof(buffer), file)) > 0) {
+        write(socket, buffer, bytesRead);
+    }
+
     fclose(file);
 }
 
