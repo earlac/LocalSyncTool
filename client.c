@@ -13,6 +13,7 @@
 
 #define PORT 8889
 #define HOST "localhost"
+#define MAX_FILE_CONTENT_SIZE 8192
 
 typedef struct {
     char filename[256];
@@ -35,6 +36,7 @@ void startClient(const char *directoryPath, FileInfo *files, int fileCount) {
     struct sockaddr_in serv_addr;
     struct hostent *server;
     char buffer[1024];
+    char fileContent[MAX_FILE_CONTENT_SIZE]; // Asegúrate de que este tamaño sea suficiente
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) 
@@ -70,10 +72,25 @@ void startClient(const char *directoryPath, FileInfo *files, int fileCount) {
 
         free(fileContent);
     }
-
+    
     // Enviar señal de fin
     n = write(sockfd, "END_OF_CHANGES\n", strlen("END_OF_CHANGES\n"));
     if (n < 0) error("ERROR writing to socket");
+
+    // Leer respuesta del servidor
+    while (1)
+    {
+        bzero(buffer, sizeof(buffer));
+        n = read(sockfd, buffer, sizeof(buffer));
+        if (n < 0) error("ERROR reading from socket");
+        if (strcmp(buffer, "END_OF_CHANGES\n") == 0) {
+            break;
+        }
+
+    }
+    
+
+
 
     close(sockfd);
 }

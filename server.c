@@ -144,6 +144,62 @@ int hasFile(FileInfo *serverFiles, int serverFileCount, const char *filename)
     }
     return 0;
 } 
+FileInfo *findMissingFiles(FileInfo *serverFiles, int serverFileCount, FileInfo *clientFiles, int clientFileCount, int *resultCount) {
+    FileInfo *missingFiles = malloc(0);
+    *resultCount = 0;
+
+    for (int i = 0; i < serverFileCount; i++) {
+        int found = 0;
+        for (int j = 0; j < clientFileCount; j++) {
+            if (strcmp(serverFiles[i].filename, clientFiles[j].filename) == 0) {
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found) {
+            missingFiles = realloc(missingFiles, (*resultCount + 1) * sizeof(FileInfo));
+            missingFiles[*resultCount] = serverFiles[i];
+            (*resultCount)++;
+        }
+    }
+
+    return missingFiles;
+}
+void sendFileContent(int socket, const char *filePath) {
+    FILE *file = fopen(filePath, "rb");
+    if (!file) {
+        perror("Error al abrir archivo para lectura");
+        return;
+    }
+
+    char buffer[1024];
+    ssize_t bytesRead;
+    while ((bytesRead = fread(buffer, sizeof(char), sizeof(buffer), file)) > 0) {
+        write(socket, buffer, bytesRead);
+    }
+
+    fclose(file);
+}
+void sendFile(int socket, const char *directoryPath, FileInfo *missingFiles, int missingFileCount) {
+    //create directory
+
+    char buffer[4096];
+    for (int i = 0; i < missingFileCount; i++) {
+        snprintf(buffer, sizeof(buffer), "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n",
+                 missingFiles[i].filename,
+                 missingFiles[i].size,
+                 missingFiles[i].mod_time,
+                 missingFiles[i].status);
+        write(socket, buffer, strlen(buffer));
+        printf("Enviando contenido de %s\n", missingFiles[i].filename);
+        char filePath[1024];                                                    // Ajusta el tamaño según tus necesidades
+        snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath,  missingFiles[i].filename); 
+        sendFileContent(socket, filePath);
+        write(socket, "END_OF_FILE\n", strlen("END_OF_FILE\n"));
+    }
+    write(socket, "END_OF_CHANGES\n", strlen("END_OF_CHANGES\n"));
+}
 
 void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount, const char *directoryPath)
 {
@@ -151,6 +207,8 @@ void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount
     int n;
     FileInfo clientFile;
     char fileContent[MAX_FILE_CONTENT_SIZE];
+    FileInfo *clientFiles = NULL;
+    int clientFileCount = 0;
 
     while (1)
     {
@@ -180,19 +238,14 @@ void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount
                    clientFile.status,
                    fileContent);
 
-                   //print name y status
-        //print serverFiles
-        printf("serverFiles: \n");
-        for (int i = 0; i < serverFileCount; i++)
-        {
-            printf("name: %s, status: %s\n", serverFiles[i].filename, serverFiles[i].status);
-        }
-
-
+            clientFiles = realloc(clientFiles, (clientFileCount + 1) * sizeof(FileInfo));
+            clientFiles[clientFileCount] = clientFile; // Aquí asumimos que clientFile es una estructura y no un puntero
+            clientFileCount++;
             int found = 0;
-            printf("ServerFileCount: %d\n", serverFileCount);
             for (int i = 0; i < serverFileCount; i++)
             {
+
+                
                 if (strcmp(clientFile.filename, serverFiles[i].filename) == 0)
                 {
                     found = 1;
@@ -236,6 +289,22 @@ void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount
             fileStart = fileEnd + strlen("END_OF_FILE") + 2; // Avanzar al inicio del siguiente archivo
         }
     }
+    int resultCount;
+    FileInfo *missingFiles = findMissingFiles(serverFiles, serverFileCount, clientFiles, clientFileCount, &resultCount);
+    if (resultCount != 0)
+    {
+        sendFile(socket, directoryPath, missingFiles, resultCount);
+    }
+    
+    printf("Archivos faltantes en el cliente:\n");
+    for (int i = 0; i < resultCount; i++)
+    {
+        printf("%s\n", missingFiles[i].filename);
+    }
+    //
+    free(clientFiles);
+
+
 }
 
 char *generateStateFileName(const char *directoryPath) {
