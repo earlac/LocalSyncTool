@@ -62,32 +62,11 @@ void startClient(const char *directoryPath, FileInfo *files, int fileCount) {
         snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
         
         char *fileContent = readFileContents(filePath);
-        if (!fileContent) {
-            continue;
-
-        if (strcmp(files[i].status, "modificado") == 0) {
-            char filePath[1024];
-            snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
-            printf("Enviando contenido actualizado de %s\n", files[i].filename);
-            sendFileContent(sockfd, filePath);
-        }
-        }
-
-        for (int i = 0; i < fileCount; i++) {
-        // ... [enviar información del archivo]
-
-        if (strcmp(files[i].status, "modificado") == 0) {
-            // Si el archivo ha sido modificado, enviar el contenido actualizado
-            char filePath[1024];
-            snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, files[i].filename);
-            printf("Enviando contenido actualizado de %s\n", files[i].filename);
-            sendFileContent(sockfd, filePath);
-        }
-    }
         char buffer[4096];  // Aumenta el tamaño si es necesario
-        snprintf(buffer, sizeof(buffer), "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n%s\n\n",
+        snprintf(buffer, sizeof(buffer), "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n%s\nEND_OF_FILE\n\n",
                  files[i].filename, files[i].size, files[i].mod_time, files[i].status, fileContent);
         write(sockfd, buffer, strlen(buffer));
+        printf("contenido enviado: %s\n", buffer);
 
         free(fileContent);
     }
@@ -293,7 +272,7 @@ char *readFileContents(const char *filePath) {
     fread(content, 1, fileSize, file);
     content[fileSize] = '\0';
     fclose(file);
-
+    printf("Contenido del archivo:\n%s\n", content);
     return content;
 }
 

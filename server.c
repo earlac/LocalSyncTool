@@ -12,6 +12,7 @@
 #include <netdb.h>
 
 #define PORT 8889
+#define MAX_FILE_CONTENT_SIZE 8192
 
 //prototypes
 char *generateStateFileName(const char *directoryPath);
@@ -79,52 +80,160 @@ void receiveFileContent(int socket, const char *filename) {
 
     fclose(file);
 }
+void createNewFile(const char *directoryPath, const char *filename, const char *fileContent)
+{
+    char filePath[1024];                                                    // Ajusta el tamaño según tus necesidades
+    snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, filename); // Construye la ruta completa del archivo
 
-void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount) {
+    FILE *file = fopen(filePath, "w"); // Abre el archivo para escritura
+    if (file == NULL)
+    {
+        perror("ERROR opening file");
+        return;
+    }
+
+    fwrite(fileContent, sizeof(char), strlen(fileContent), file); // Escribe el contenido en el archivo
+    fclose(file);                                                 // Cierra el archivo
+
+    printf("Archivo %s creado exitosamente en %s\n", filename, filePath);
+}
+
+//funcion elminar arhcivo en directorio
+void deleteFile(const char *directoryPath, const char *filename)
+{
+    char filePath[1024];                                                    // Ajusta el tamaño según tus necesidades
+    snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, filename); // Construye la ruta completa del archivo
+
+    if (remove(filePath) == 0)
+    {
+        printf("Archivo %s eliminado exitosamente\n", filename);
+    }
+    else
+    {
+        perror("ERROR eliminando archivo");
+    }
+}
+
+//funcion que modifica el archivo
+void modifyFile(const char *directoryPath, const char *filename, const char *fileContent)
+{
+    char filePath[1024];                                                    // Ajusta el tamaño según tus necesidades
+    snprintf(filePath, sizeof(filePath), "%s/%s", directoryPath, filename); // Construye la ruta completa del archivo
+    printf("filePath: %s\n", filePath);
+    FILE *file = fopen(filePath, "w"); // Abre el archivo para escritura
+    if (file == NULL)
+    {
+        perror("ERROR opening file");
+        return;
+    }
+
+    fwrite(fileContent, sizeof(char), strlen(fileContent), file); // Escribe el contenido en el archivo
+    fclose(file);                                                 // Cierra el archivo
+
+    printf("Archivo %s modificado exitosamente en %s\n", filename, filePath);
+}
+//funcion para saber si un serverFiles tiene un archivo
+int hasFile(FileInfo *serverFiles, int serverFileCount, const char *filename)
+{
+    for (int i = 0; i < serverFileCount; i++)
+    {
+        if (strcmp(serverFiles[i].filename, filename) == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+} 
+
+void processClientChanges(int socket, FileInfo *serverFiles, int serverFileCount, const char *directoryPath)
+{
     char buffer[4096];
     int n;
     FileInfo clientFile;
+    char fileContent[MAX_FILE_CONTENT_SIZE];
 
-    while (1) {
+    while (1)
+    {
         bzero(buffer, sizeof(buffer));
         n = read(socket, buffer, sizeof(buffer) - 1);
-        if (n < 0) error("ERROR reading from socket");
-        if (n == 0) break; // Fin de la transmisión
+        if (n < 0)
+            error("ERROR reading from socket");
+        if (n == 0)
+            break;
 
-        if (strncmp(buffer, "END_OF_CHANGES", 14) == 0) {
-            break; // Fin de la recepción de cambios
+        if (strncmp(buffer, "END_OF_CHANGES", 14) == 0)
+        {
+            break;
         }
 
-        sscanf(buffer, "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\n", 
-               clientFile.filename, 
-               &clientFile.size, 
-               &clientFile.mod_time, 
-               clientFile.status);
+        // Procesar cada archivo en el buffer
+        char *fileStart = buffer;
+        char *fileEnd;
+        while ((fileEnd = strstr(fileStart, "END_OF_FILE")) != NULL)
+        {
+            *fileEnd = '\0'; // Reemplazar el delimitador con un terminador de string para aislar el archivo actual
 
-        int found = 0;
-        for (int i = 0; i < serverFileCount; i++) {
-            // printf("\n");
-            // printf("\n");
-            // printf(clientFile.filename); 
-            // printf("\n");
-            // printf(serverFiles[i].filename);
-            // printf("\n");
-            if (strcmp(clientFile.filename, serverFiles[i].filename) == 0) {
-                found = 1;
-                // Comparar el estado del archivo
-                if (strcmp(clientFile.status, "eliminado") == 0 || strcmp(serverFiles[i].status, "eliminado") == 0) {
-                    printf("Archivo %s eliminado\n", clientFile.filename);
-                } else if (strcmp(clientFile.status, "modificado") == 0 || strcmp(serverFiles[i].status, "modificado") == 0) {
+            sscanf(fileStart, "File: %s\nSize: %ld\nLast Modified: %ld\nStatus: %s\nContent:\n%[^\n]",
+                   clientFile.filename,
+                   &clientFile.size,
+                   &clientFile.mod_time,
+                   clientFile.status,
+                   fileContent);
+
+                   //print name y status
+        //print serverFiles
+        printf("serverFiles: \n");
+        for (int i = 0; i < serverFileCount; i++)
+        {
+            printf("name: %s, status: %s\n", serverFiles[i].filename, serverFiles[i].status);
+        }
+
+
+            int found = 0;
+            printf("ServerFileCount: %d\n", serverFileCount);
+            for (int i = 0; i < serverFileCount; i++)
+            {
+                if (strcmp(clientFile.filename, serverFiles[i].filename) == 0)
+                {
+                    found = 1;
+                    // Comparar el estado del archivo
+                    if (strcmp(clientFile.status, "eliminado") == 0)
+                    {
+                        printf("Archivo %s eliminado en el cliente\n", clientFile.filename);
+                        deleteFile(directoryPath, clientFile.filename);
+                    }
+                    else if (strcmp(serverFiles[i].status, "eliminado") == 0)
+                    {
+                        printf("Archivo %s eliminado en el servidor\n", clientFile.filename);
+                    }
+                    else if (strcmp(clientFile.status, "modificado") == 0 && !strcmp(serverFiles[i].status, "modificado") == 0)
+                    {
+                        printf("Archivo %s modificado en el cliente\n", clientFile.filename);
+                        modifyFile(directoryPath, clientFile.filename, fileContent);
+                    }else if (strcmp(clientFile.status, "modificado") == 0 && strcmp(serverFiles[i].status, "modificado") == 0)
+                    {
+                        printf("Archivo %s modificado en el cliente y en el servidor\n", clientFile.filename);
+                    }else if (!strcmp(clientFile.status, "modificado") == 0 && strcmp(serverFiles[i].status, "modificado") == 0)
+                    {
+                        printf("Archivo %s modificado en el servidor\n", clientFile.filename);
+                    }
+                    
+                    /*else if (strcmp(clientFile.status, "modificado") == 0 || strcmp(serverFiles[i].status, "modificado") == 0) {
                     printf("Recibiendo contenido actualizado para %s\n", clientFile.filename);
-                    receiveFileContent(socket, clientFile.filename);
-                } else {
-                    printf("Archivo %s intacto\n", clientFile.filename);
+                    receiveFileContent(socket, clientFile.filename);*/
+                    else
+                    {
+                        printf("Archivo %s intacto\n", clientFile.filename);
+                    }
+                    break;
                 }
-                break;
             }
-        }
-        if (!found) {
-            printf("Archivo %s nuevo\n", clientFile.filename);
+            if (!found)
+            {
+                printf("Archivo %s nuevo\n", clientFile.filename);
+                createNewFile(directoryPath, clientFile.filename, fileContent);
+            }
+            fileStart = fileEnd + strlen("END_OF_FILE") + 2; // Avanzar al inicio del siguiente archivo
         }
     }
 }
@@ -180,7 +289,7 @@ void readDirectory(const char *directoryPath, FileInfo **files, int *fileCount) 
                 printf("No se pudo acceder a: %s\n", filePath); // Mostrar el error con la ruta del archivo
                 continue;
             }
-
+            
             (*files)[i].size = fileInfo.st_size;
             (*files)[i].mod_time = fileInfo.st_mtime;
             printf("Archivo: %s\n", (*files)[i].filename);
@@ -249,7 +358,7 @@ void startServer(const char *directoryPath, FileInfo *serverFiles, int serverFil
     if (newsockfd < 0) 
           error("ERROR on accept");
 
-    processClientChanges(newsockfd, serverFiles, serverFileCount); // Procesar los cambios enviados por el cliente
+    processClientChanges(newsockfd, serverFiles, serverFileCount, directoryPath); // Procesar los cambios enviados por el cliente
 
     close(newsockfd);
     close(sockfd);
